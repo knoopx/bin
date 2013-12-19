@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+function __github_current_branch {
+  echo "$1`git branch --no-color 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1/'`"
+}
+
+function __github_remote_origin {
+  echo "$1`git remote -v | grep "(push)" | sed "s#origin.*:\([^/]*\).*push.*#\1#"`"
+}
+
+git fetch origin && hub pull-request -h $(__github_remote_origin):$(__github_current_branch)
