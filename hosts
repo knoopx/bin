@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+
+require 'thor'
+
+class Hosts < Thor
+  desc "list", "lists all set hosts"
+
+  def list
+    `dscl localhost -readall /Local/Default/Hosts 2>&1`.chomp.split("-\n").each do |host|
+      puts [host[/^RecordName: (.+)$/, 1], host[/^IPAddress: (.+)$/, 1]].join(" => ")
+    end
+  end
+
+  default_task :list
+
+  desc "add HOST [ADDRESS]", "add host"
+
+  def add(host, address = "127.0.0.1")
+    system "sudo dscl localhost -create /Local/Default/Hosts/#{host} IPAddress #{address}"
+  end
+
+  desc "rm HOST", "remove specified host"
+
+  def rm(host)
+    system "sudo dscl localhost -delete /Local/Default/Hosts/#{host}"
+  end
+end
+
+Hosts.start

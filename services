@@ -1,0 +1,54 @@
+#!/usr/bin/env ruby
+
+require 'thor'
+
+class Services < Thor
+  desc "list", "lists all available homebrew services"
+
+  def list
+    if services.none?
+      puts "There are no available services"
+    else
+      services.each { |name, plist| puts "#{name}: #{plist}" }
+    end
+  end
+
+  default_task :list
+
+  desc "start [SERVICE]..[SERVICE]", "starts specified homebrew services"
+
+  def start(*args)
+    args.each do |arg|
+      services[arg] or raise "Unknown service: #{arg}"
+      system("launchctl load -w #{services[arg]}")
+    end
+  end
+
+  desc "stop [SERVICE]..[SERVICE]", "stops specified homebrew services"
+
+  def stop(*args)
+    args.each do |arg|
+      services[arg] or raise "Unknown service: #{arg}"
+      system("launchctl unload -w #{services[arg]}")
+    end
+  end
+
+  desc "restart [SERVICE]..[SERVICE]", "restarts specified homebrew services"
+
+  def restart(nick)
+    invoke :stop, [nick]
+    invoke :start, [nick]
+  end
+
+  no_tasks do
+    def services
+      @services ||= begin
+        Dir.glob(File.join(`brew --prefix`.chomp, "opt", "**{,/*/**}/homebrew.mxcl.*.plist")).each_with_object({}) do |plist, h|
+          h[File.basename(plist)[/homebrew\.mxcl\.(.+)\.plist/, 1]] = plist
+        end
+      end
+    end
+  end
+end
+
+Services.start
