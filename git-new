@@ -1,0 +1,77 @@
+#! /usr/bin/env ruby
+
+require "thor"
+require 'rugged'
+require 'versionomy'
+
+class GitNew < Thor
+  desc "release", "New release branch"
+
+  method_option :bump, default: "minor"
+
+  def release
+    fetch_upstream
+    new_branch("release/#{next_version(options[:bump])}", param(:integration))
+  end
+
+  desc "hotfix", "New hotfix branch"
+
+  def hotfix(name)
+    fetch_upstream
+    new_branch("hotfix/#{name}", param(:stable))
+  end
+
+  desc "feature", "New feature branch"
+
+  def feature(name)
+    fetch_upstream
+    new_branch("feature/#{name}", param(:integration))
+  end
+
+  desc "set", "Set config options"
+  long_desc <<-LONGDESC
+    `stable`: Stable branch name (master)\x5
+    `integration`: Integration branch name (devel)\x5
+    `upstream`: Upstream remote (origin)
+  LONGDESC
+
+  def set(key, value)
+    repo.config["gitnew.#{key}"] = value
+  end
+
+  def self.exit_on_failure?
+    true
+  end
+
+  protected
+
+  def next_version(bump)
+    last_version.bump(bump)
+  end
+
+  def last_version
+    @last_version ||= Versionomy.parse(IO.popen(["git", "describe", "--tags", "--abbrev=0", param(:stable)]).read.strip)
+  end
+
+  def new_branch(name, from)
+    system "git", "checkout", "-b", name, "#{param(:upstream)}/#{from}"
+  end
+
+  def fetch_upstream
+    system "git", "fetch", param(:upstream)
+  end
+
+  def upstream
+    @upstream ||= Rugged::Remote.lookup(repo, param(:upstream))
+  end
+
+  def param(key)
+    repo.config["gitnew.#{key}"] or raise "#{key} is not configured"
+  end
+
+  def repo
+    @repo ||= Rugged::Repository.new(Dir.pwd)
+  end
+end
+
+GitNew.start
