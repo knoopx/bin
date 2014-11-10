@@ -1,0 +1,254 @@
+#!/usr/bin/env ruby
+
+require 'spotlight'
+require 'sinatra'
+require 'slim'
+require 'coffee_script'
+require 'sass'
+require 'thin'
+require 'mime-types'
+require 'fileutils'
+require 'active_support/core_ext/integer/time'
+
+
+class Thumbnail
+  attr_reader :video
+
+  def initialize(video)
+    @video = video
+  end
+
+  def path
+    @path ||= File.join(File.dirname(video.path), ".browse", [video.filename, ".jpg"].join)
+  end
+
+  def generate!
+    puts path
+    from_min, from_max = 1, 6 * 3
+    to_min, to_max = 5, 95
+    snapshots = from_min.upto(from_max).map do |index|
+      position = ((to_max - to_min) * (index - from_min)) / (from_max - from_min) + to_min
+
+      Tempfile.open(["browse", ".jpg"]) do |temp_file|
+        system "ffmpegthumbnailer", "-i", video.path, "-cjpg", "-t#{position}%", "-s300", "-o", temp_file.path
+        temp_file.path
+      end
+    end
+
+    dirname = File.dirname(path)
+    FileUtils.mkdir_p(dirname) unless File.directory?(dirname)
+    system "montage", *snapshots.select { |f| File.exist?(f) }, "-tile", "6x", "-geometry", "+0+0", path
+  ensure
+    snapshots.each { |f| FileUtils.rm(f) if File.exist?(f) }
+  end
+end
+
+class Video
+  attr_reader :path, :filename, :extension
+
+  def initialize(path)
+    @path = File.expand_path(path)
+    @filename = File.basename(path, ".*")
+    @extension = File.extname(path)
+  end
+
+  def thumbnail
+    @thumnail ||= Thumbnail.new(self)
+  end
+
+  def spotlight_item
+    @spotlight_item ||= Spotlight::Item.new(@path)
+  end
+
+  def created_at
+    @created_at ||= spotlight_item.get(:kMDItemDateAdded)
+  end
+end
+
+unless File.directory?(ARGV.first)
+  puts "Invalid directory: #{ARGV.first}"
+  exit 1
+end
+
+configure do
+  set :port, 3000
+  set :bind, '0.0.0.0'
+  set :lock, true
+  set :videos, Dir.glob(File.join(ARGV.first, "**", "*.*")).
+      select { |file| MIME::Types.type_for(file).grep(/video/).any? }.
+      map { |file| Video.new(file) }
+end
+
+get '/' do
+  slim :index
+end
+
+get '/videos' do
+  content_type :json
+  settings.videos.map { |video| {id: settings.videos.index(video), name: video.filename, created_at: video.created_at} }.to_json
+end
+
+get '/videos/:id/thumbnail' do
+  expires 1.month, :public, :must_revalidate
+  id = params[:id].to_i
+  video = settings.videos[id] or not_found
+  video.thumbnail.generate! unless File.exist?(video.thumbnail.path)
+  send_file video.thumbnail.path
+end
+
+get '/videos/:id/play' do
+  id = params[:id].to_i
+  video = settings.videos[id] or not_found
+  system "open", video.path
+end
+
+__END__
+
+@@ index
+
+doctype 5
+html lang="en" ng-app="app"
+  head
+    title ng-bind="title"
+    script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/angular.js/1.3.0/angular.min.js"
+    script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/mousetrap/1.4.6/mousetrap.min.js"
+    link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.1.0/css/font-awesome.min.css" media="all"
+    sass:
+      body
+        font-family: Helvetica
+        box-sizing: border-box
+        margin: 0
+        padding: 250px 0
+        background-color: black
+        color: white
+
+      input
+        font-size: 48px
+        margin: 0
+        padding: 0
+        border: none
+        background: none
+        outline: none
+        color: white
+        display: block
+
+      .float
+        position: fixed
+        padding: 10px 20px
+        bottom: 20px
+        left: 20px
+        right: 20px
+        background-color: rgba(black, .4)
+        border-radius: 15px
+        z-index: 9999
+
+        &:after
+          clear: both
+
+      .pull-right
+        float: right
+
+        a
+          display: inline-block
+          width: 58px
+
+          opacity: .5
+          .fa
+            font-size: 48px
+
+          &.active
+            opacity: 1
+
+      .thumbnail
+        position: relative
+        transform: transale3d(0,0,0)
+        opacity: .25
+        padding-top: 250px
+        margin-top: -250px
+
+        &.active
+          opacity: 1
+
+          h1
+            display: block
+
+        img
+          width: 100%
+          display: block
+
+        h1
+          display: none
+          position: absolute
+          right: 20px
+          top: 200px
+          color: white
+          text-shadow: 1px 1px 1px black
+          padding: 0
+          font-size: 18px
+
+    coffee:
+      app = angular.module("app", [])
+
+      app.controller "mainCtrl", ($scope, $http, $timeout, $location, $anchorScroll, $filter, $parse) ->
+        $scope.filter =
+          reverse: true
+          order: 'created_at'
+
+        $scope.videos = []
+
+        keyMap =
+          'up': 'previous(1)'
+          'pageup': 'previous(10)'
+          'down': 'next(1)'
+          'pagedown': 'next(10)'
+          'home': 'setIndex(0)'
+          'end': 'setIndex(videos.length - 1)'
+          'enter': 'play(videos[currentIndex])'
+
+        angular.forEach keyMap, (expression, key) ->
+          Mousetrap.bind key, (e) ->
+            e.preventDefault()
+            $scope.$apply ->
+              $parse(expression)($scope)
+
+        $scope.setOrder = (order, reverse = false) ->
+          $scope.filter.order = order
+          $scope.filter.reverse = reverse
+
+        $scope.play = (video) ->
+          $http.get("/videos/#{video.id}/play")
+
+        $scope.setIndex = (index) ->
+          $scope.currentIndex = index
+          $location.hash(index)
+          $anchorScroll()
+
+        $scope.next = (count) ->
+          if $scope.currentIndex + count < $scope.videos.length
+            $scope.setIndex($scope.currentIndex + count)
+
+        $scope.previous = (count) ->
+          if $scope.currentIndex - count >= 0
+            $scope.setIndex($scope.currentIndex - count)
+
+        $http.get("/videos").success (videos) ->
+          $scope.$watch "filter", ->
+            $scope.currentIndex = 0
+            $scope.videos = $filter("orderBy")($filter("filter")(videos, name: $scope.filter.name), $scope.filter.order, $scope.filter.reverse)
+          , true
+
+  body ng-controller="mainCtrl"
+    .float
+      .pull-right
+        a ng-click="setOrder('name')" ng-class="{'active': filter.order == 'name'}"
+          i.fa.fa-sort-alpha-asc
+
+        a ng-click="setOrder('created_at', true)" ng-class="{'active': filter.order == 'created_at'}"
+          i.fa.fa-sort-amount-asc
+
+      input.mousetrap autofocus="on" type="search" ng-model="filter.name"
+
+    .thumbnail id="{{$index}}" ng-class="{active: currentIndex == $index}" ng-repeat="video in videos track by video.id"
+      img ng-src="/videos/{{video.id}}/thumbnail"
+      h1
+        | {{video.name}}
