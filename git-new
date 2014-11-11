@@ -50,7 +50,7 @@ class GitNew < Thor
   end
 
   def last_version
-    @last_version ||= Versionomy.parse(IO.popen(["git", "describe", "--tags", "--abbrev=0", param(:stable)]).read.strip)
+    @last_version ||= Versionomy.parse(IO.popen(["git", "describe", "--tags", "--abbrev=0", "#{param(:upstream)}/#{param(:stable)}"]).read.strip)
   end
 
   def new_branch(name, from)
